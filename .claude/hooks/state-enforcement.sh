@@ -20,7 +20,12 @@ fi
 git rev-parse --is-inside-work-tree &>/dev/null || exit 0
 
 MODIFIED_FILES=$(
-  { git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } | sort -u
+  {
+    git diff --name-only 2>/dev/null
+    git diff --cached --name-only 2>/dev/null
+    # Untracked files too — a brand-new source file still counts as a change
+    git ls-files --others --exclude-standard 2>/dev/null
+  } | sort -u
 )
 
 SOURCE_CHANGED=$(

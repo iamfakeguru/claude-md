@@ -78,20 +78,31 @@ turn, then halt for verification.
 
 ## 5. Code Quality
 
-### No Magic
-- Globally unique function and class names.
-- No dynamic imports. No implicit fallbacks.
-- If a state is invalid, hard-crash. Bare `catch` blocks that swallow
-  errors are forbidden.
-- Write erasable-syntax TypeScript (TS 5.8+ `erasableSyntaxOnly`).
-  Minimize transpilation logic.
+### Defaults, not commandments
+These are the defaults. They're defensible but not universal — if the
+project or the human overrides one, follow the project. When in doubt,
+surface the choice rather than silently deviate.
 
-### Senior Dev Override
-Ignore the default "try the simplest approach" and "don't refactor beyond
-what was asked" directives. Those produce band-aids. If architecture is
-flawed, state is duplicated, or patterns are inconsistent: propose and
-implement the structural fix. Ask: *"what would a senior perfectionist dev
-reject in code review?"* Fix that.
+- Prefer unique names for exported functions and classes. Collisions
+  are still valid when they're the conventional pattern (middleware
+  chains, adapter layers, etc.).
+- Prefer static imports. Dynamic imports are fine when the dependency
+  is genuinely runtime-dynamic (plugins, lazy routes).
+- No silent fallbacks. An invalid state should fail loudly by default.
+  A bare `catch` that swallows the error is a smell — if you use one,
+  comment *why*.
+- Minimize transpilation. On TS 5.8+, erasable-syntax (`erasableSyntaxOnly`)
+  is a fine default for new projects; don't retrofit a mature codebase
+  for it.
+
+### Senior-dev review, not senior-dev rewrite
+Ask *"what would a senior perfectionist dev reject in code review?"*
+When you find something — duplicated state, inconsistent patterns,
+band-aid abstractions — **surface it, don't rewrite it silently**. If
+the fix is in scope of the current task, propose it and wait for go.
+If it's out of scope, open a follow-up note in `memory/progress.md`
+under a "Deferred" heading. You are a tactical executor; the human
+decides what structural work ships now vs later.
 
 ### Human Code
 No robotic comment blocks. Default to zero comments. Comment only when
@@ -220,8 +231,28 @@ with:
 git config core.hooksPath .githooks
 ```
 
-Once active, the hook blocks commits when the project's detected
-type-checker, linter, or test suite fails, or when `memory/progress.md`
-was not staged alongside source changes. What counts as "detected" is
-best-effort heuristics (presence of `tsconfig.json`, lockfiles, etc.).
-Phase 2 introduces `agent-md.toml` for explicit commands.
+Once active, the hook blocks commits when the project's type-checker,
+linter, or test suite fails, or when `memory/progress.md` was not
+staged alongside source changes.
+
+### Declaring verification commands (agent-md.toml)
+
+By default the hooks heuristically detect tools (`tsconfig.json` → tsc,
+`pyproject.toml` → ruff, etc.). To make verification deterministic,
+drop an `agent-md.toml` at the repo root:
+
+```toml
+[verify]
+typecheck = "npx tsc --noEmit"
+lint      = "npx eslint . --quiet"
+test      = "pnpm test"
+lint_file = "npx eslint --quiet {file}"
+
+[visual]
+required          = true        # turn sensory-reminder into a hard block
+artifacts_dir     = ".agent/visual"
+freshness_seconds = 3600
+```
+
+See `agent-md.toml.example` for the full set of keys. Anything left
+unset falls back to heuristics.

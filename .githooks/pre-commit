@@ -8,6 +8,9 @@
 #
 # Runs the same verification stack as Claude Code's stop-verify hook,
 # plus the state-enforcement check against memory/progress.md.
+#
+# Configuration:
+#   agent-md.toml [verify] typecheck / lint / test override heuristics.
 
 set -u
 
@@ -20,94 +23,110 @@ ok()  { printf '\033[32m✓\033[0m %s\n' "$*"; }
 
 log "Archimedes pre-commit verification"
 
-# --- TypeScript ---
-if [ -f "tsconfig.json" ]; then
+# --- Minimal TOML reader (same logic as .claude/hooks/_lib.sh) ---
+read_toml() {
+  local file="$1" section="$2" key="$3"
+  [ -f "$file" ] || return 0
+  awk -v section="$section" -v key="$key" '
+    BEGIN { in_sec = 0 }
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*\[/ {
+      sec = $0
+      sub(/^[[:space:]]*\[/, "", sec); sub(/\][[:space:]]*$/, "", sec)
+      gsub(/[[:space:]]/, "", sec)
+      in_sec = (sec == section) ? 1 : 0
+      next
+    }
+    in_sec && index($0, "=") > 0 {
+      k = substr($0, 1, index($0, "=") - 1)
+      v = substr($0, index($0, "=") + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+      sub(/[[:space:]]*#.*$/, "", v)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+      if (k == key) {
+        if (v ~ /^".*"$/)      { gsub(/^"|"$/, "", v) }
+        else if (v ~ /^'\''.*'\''$/) { gsub(/^'\''|'\''$/, "", v) }
+        print v
+        exit
+      }
+    }
+  ' "$file"
+}
+
+TOML="${AGENT_MD_TOML:-agent-md.toml}"
+CFG_TYPECHECK=$(read_toml "$TOML" verify typecheck)
+CFG_LINT=$(read_toml "$TOML" verify lint)
+CFG_TEST=$(read_toml "$TOML" verify test)
+
+run_check() {
+  local label="$1" cmd="$2"
+  [ -n "$cmd" ] || return 0
   CHECKS=$((CHECKS + 1))
-  if npx tsc --noEmit 2>&1; then
-    ok "tsc --noEmit"
+  if eval "$cmd"; then
+    ok "$label"
   else
-    err "tsc --noEmit failed"
+    err "$label failed"
     FAIL=1
   fi
+}
+
+# --- Typecheck ---
+if [ -n "$CFG_TYPECHECK" ]; then
+  run_check "$CFG_TYPECHECK" "$CFG_TYPECHECK"
+elif [ -f "tsconfig.json" ]; then
+  run_check "tsc --noEmit" "npx tsc --noEmit"
 fi
 
-# --- ESLint ---
-if ls .eslintrc* eslint.config.* 2>/dev/null | grep -q .; then
-  CHECKS=$((CHECKS + 1))
-  if npx eslint . --quiet 2>&1; then
-    ok "eslint"
-  else
-    err "eslint failed"
-    FAIL=1
-  fi
+# --- Lint ---
+if [ -n "$CFG_LINT" ]; then
+  run_check "$CFG_LINT" "$CFG_LINT"
+elif ls .eslintrc* eslint.config.* 2>/dev/null | grep -q .; then
+  run_check "eslint" "npx eslint . --quiet"
 fi
 
-# --- Python ruff ---
-if command -v ruff &>/dev/null; then
+# --- Python ruff (when no explicit lint override) ---
+if [ -z "$CFG_LINT" ] && command -v ruff &>/dev/null; then
   HAS_PY=$(git diff --cached --name-only | grep -c '\.py$' || true)
   if [ "${HAS_PY:-0}" -gt 0 ] || ls *.py 2>/dev/null | head -1 | grep -q .; then
-    CHECKS=$((CHECKS + 1))
-    if ruff check . 2>&1; then
-      ok "ruff"
-    else
-      err "ruff failed"
-      FAIL=1
-    fi
+    run_check "ruff" "ruff check ."
   fi
 fi
 
 # --- Python mypy ---
-if command -v mypy &>/dev/null && { [ -f "mypy.ini" ] || grep -q '\[tool.mypy\]' pyproject.toml 2>/dev/null; }; then
-  CHECKS=$((CHECKS + 1))
-  if mypy . 2>&1; then
-    ok "mypy"
-  else
-    err "mypy failed"
-    FAIL=1
-  fi
+if [ -z "$CFG_TYPECHECK" ] && command -v mypy &>/dev/null \
+   && { [ -f "mypy.ini" ] || grep -q '\[tool.mypy\]' pyproject.toml 2>/dev/null; }; then
+  run_check "mypy" "mypy ."
 fi
 
 # --- Rust ---
-if [ -f "Cargo.toml" ]; then
-  CHECKS=$((CHECKS + 1))
-  if cargo check 2>&1; then
-    ok "cargo check"
-  else
-    err "cargo check failed"
-    FAIL=1
-  fi
+if [ -z "$CFG_TYPECHECK" ] && [ -f "Cargo.toml" ]; then
+  run_check "cargo check" "cargo check"
 fi
 
 # --- Tests ---
-if [ -f "package.json" ]; then
+if [ -n "$CFG_TEST" ]; then
+  run_check "$CFG_TEST" "$CFG_TEST"
+elif [ -f "package.json" ]; then
+  # Detect package manager via lockfile (pnpm > yarn > bun > npm)
+  PM="npm"
+  [ -f "pnpm-lock.yaml" ] && PM="pnpm"
+  [ -f "yarn.lock" ] && PM="yarn"
+  [ -f "bun.lockb" ] || [ -f "bun.lock" ] && PM="bun"
   HAS_TEST=$(node -e "try{const p=require('./package.json');if(p.scripts&&p.scripts.test&&p.scripts.test!=='echo \"Error: no test specified\" && exit 1')process.stdout.write('1')}catch{}" 2>/dev/null)
   if [ "${HAS_TEST:-}" = "1" ]; then
-    CHECKS=$((CHECKS + 1))
-    if npm test --silent 2>&1; then
-      ok "npm test"
-    else
-      err "npm test failed"
-      FAIL=1
-    fi
+    case "$PM" in
+      pnpm) run_check "pnpm test" "pnpm test --silent" ;;
+      yarn) run_check "yarn test" "yarn test --silent" ;;
+      bun)  run_check "bun test"  "bun test" ;;
+      npm)  run_check "npm test"  "npm test --silent" ;;
+    esac
   fi
 elif [ -f "pyproject.toml" ] || [ -f "pytest.ini" ]; then
   if command -v pytest &>/dev/null; then
-    CHECKS=$((CHECKS + 1))
-    if pytest --tb=short -q 2>&1; then
-      ok "pytest"
-    else
-      err "pytest failed"
-      FAIL=1
-    fi
+    run_check "pytest" "pytest --tb=short -q"
   fi
 elif [ -f "Cargo.toml" ]; then
-  CHECKS=$((CHECKS + 1))
-  if cargo test --quiet 2>&1; then
-    ok "cargo test"
-  else
-    err "cargo test failed"
-    FAIL=1
-  fi
+  run_check "cargo test" "cargo test --quiet"
 fi
 
 # --- State enforcement (memory/progress.md) ---
@@ -115,7 +134,7 @@ if [ -f "memory/progress.md" ]; then
   STAGED=$(git diff --cached --name-only)
   SOURCE_CHANGED=$(
     echo "$STAGED" \
-      | grep -vE '^(memory/|docs/|\.claude/|\.githooks/|skills/|README\.md$|LICENSE$|AGENT\.md$|AGENTS\.md$|CLAUDE\.md$|\.cursorrules$|\.windsurfrules$|CONVENTIONS\.md$)' \
+      | grep -vE '^(memory/|docs/|\.claude/|\.githooks/|skills/|README\.md$|LICENSE$|AGENT\.md$|AGENTS\.md$|CLAUDE\.md$|\.cursorrules$|\.windsurfrules$|CONVENTIONS\.md$|agent-md\.toml(\.example)?$)' \
       | grep -v '^$' \
       | grep -cvE '\.md$' || true
   )
@@ -138,6 +157,7 @@ fi
 
 if [ "$CHECKS" -eq 0 ]; then
   log "No type-checker, linter, or test suite detected. Commit allowed but unverified."
+  log "Declare commands in agent-md.toml to make this deterministic."
 else
   ok "All $CHECKS check(s) passed."
 fi

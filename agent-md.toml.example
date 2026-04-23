@@ -1,0 +1,33 @@
+# agent-md.toml — explicit configuration for Archimedes hooks.
+#
+# Copy to the repo root as `agent-md.toml` to override the heuristic
+# tool detection in .claude/hooks/* and .githooks/pre-commit. Anything
+# you leave unset falls back to the heuristic default.
+#
+# Values must be simple strings on a single line. `#` starts a comment.
+
+[verify]
+# Project-wide type-check command. Runs at Stop and at pre-commit.
+# typecheck = "npx tsc --noEmit"
+
+# Project-wide lint command. Runs at Stop and at pre-commit.
+# lint = "npx eslint . --quiet"
+
+# Per-file lint used by post-edit-verify (fast, runs after every Write/Edit).
+# The string {file} is substituted with the edited file path.
+# lint_file = "npx eslint --quiet {file}"
+
+# Test suite. Runs at Stop and at pre-commit.
+# test = "npm test --silent"
+
+[visual]
+# When true, sensory-reminder.sh becomes a BLOCKING hook:
+# Stop is blocked unless a fresh artifact exists in artifacts_dir
+# (modified within freshness_seconds) for every UI file that changed.
+# required = false
+
+# Where visual evidence artifacts live. Screenshot + markdown note.
+# artifacts_dir = ".agent/visual"
+
+# Max age of an artifact (seconds) before it's considered stale.
+# freshness_seconds = 3600
