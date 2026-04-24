@@ -1,5 +1,5 @@
 #!/bin/bash
-# _lib.sh — shared helpers for Archimedes hooks.
+# _lib.sh — shared helpers for agent-md hooks.
 # Source this from other hooks:  . "$(dirname "$0")/_lib.sh"
 #
 # Kept minimal on purpose — shell, not Python, so hooks stay dependency-free.
@@ -42,14 +42,14 @@ toml_path() {
   echo "${AGENT_MD_TOML:-agent-md.toml}"
 }
 
-# stat_mtime <path> — portable mtime in epoch seconds (macOS + Linux).
+# stat_mtime <path> — portable mtime in epoch seconds (Linux + macOS).
 stat_mtime() {
-  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
 }
 
-# file_size <path> — portable byte size (macOS + Linux).
+# file_size <path> — portable byte size (Linux + macOS).
 file_size() {
-  stat -f %z "$1" 2>/dev/null || stat -c %s "$1" 2>/dev/null
+  stat -c %s "$1" 2>/dev/null || stat -f %z "$1" 2>/dev/null
 }
 
 # detect_pm — prints the detected Node package manager based on lockfile,
